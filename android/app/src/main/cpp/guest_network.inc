@@ -135,7 +135,7 @@ std::string describe(const sockaddr_storage& address){
 // Logs each peer address a socket talks to the first time it appears (up to 32 per socket).
 void notePeer(Socket& socket,const char* direction,const std::string& peer,ssize_t bytes){
     if(socket.peersLogged.size()>=32||!socket.peersLogged.insert(std::string(direction)+peer).second)return;
-    NFS_RUNTIME_LOG(ANDROID_LOG_INFO,"NFSU2","Winsock: %s %s (primer paquete, %d bytes)",direction,peer.c_str(),int(bytes));
+    NFS_RUNTIME_LOG(ANDROID_LOG_INFO,"NFSU2","Winsock: %s %s (first packet, %d bytes)",direction,peer.c_str(),int(bytes));
 }
 // Per-peer datagram counters, summarized every 5 s while a socket is active.
 void count(uint32_t handle,Socket& socket,const std::string& peer,bool sent,ssize_t bytes){
@@ -146,7 +146,7 @@ void count(uint32_t handle,Socket& socket,const std::string& peer,bool sent,ssiz
     if(now<socket.nextSummary)return;
     socket.nextSummary=now+std::chrono::seconds(5);
     for(auto& [address,value]:socket.traffic)
-        NFS_RUNTIME_LOG(ANDROID_LOG_INFO,"NFSU2","Winsock: trafico %08x %s envia %u paq/%u B, recibe %u paq/%u B",handle,address.c_str(),value.sentPackets,value.sentBytes,value.receivedPackets,value.receivedBytes);
+        NFS_RUNTIME_LOG(ANDROID_LOG_INFO,"NFSU2","Winsock: traffic %08x %s sent %u packets/%u B, received %u packets/%u B",handle,address.c_str(),value.sentPackets,value.sentBytes,value.receivedPackets,value.receivedBytes);
     socket.traffic.clear();
 }
 bool hardError(ssize_t result){return result<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK;}
@@ -193,7 +193,7 @@ void socketCreate(){
     if(family==AF_INET&&type==3&&protocol==1){  // SOCK_RAW + IPPROTO_ICMP: ping
         int fd=::socket(AF_INET,SOCK_DGRAM|SOCK_NONBLOCK|SOCK_CLOEXEC,IPPROTO_ICMP);
         if(fd<0){
-            NFS_RUNTIME_LOG(ANDROID_LOG_WARN,"NFSU2","Winsock: ping ICMP no permitido por Android: %s",std::strerror(errno));
+            NFS_RUNTIME_LOG(ANDROID_LOG_WARN,"NFSU2","Winsock: ICMP ping not permitted by Android: %s",std::strerror(errno));
             lastError=10013;ret(net::invalidSocket,3);return;  // WSAEACCES, as for a non-admin raw socket on Windows
         }
         uint32_t handle=net::newHandle(fd,false);net::sockets[handle].icmp=true;
@@ -201,12 +201,12 @@ void socketCreate(){
         ret(handle,3);return;
     }
     if(family!=AF_INET||(type!=SOCK_STREAM&&type!=SOCK_DGRAM))
-        NFS_RUNTIME_LOG(ANDROID_LOG_WARN,"NFSU2","Winsock: socket(af=%u,type=%u,protocol=%u) no soportado desde %08x",family,type,protocol,read32(g_esp));
+        NFS_RUNTIME_LOG(ANDROID_LOG_WARN,"NFSU2","Winsock: socket(af=%u,type=%u,protocol=%u) unsupported from %08x",family,type,protocol,read32(g_esp));
     if(family!=AF_INET){lastError=net::wsaEafnosupport;ret(net::invalidSocket,3);return;}
     if(type!=SOCK_STREAM&&type!=SOCK_DGRAM){lastError=10044;ret(net::invalidSocket,3);return;}  // WSAESOCKTNOSUPPORT
     int fd=::socket(AF_INET,int(type)|SOCK_NONBLOCK|SOCK_CLOEXEC,int(protocol));
     if(fd<0){
-        NFS_RUNTIME_LOG(ANDROID_LOG_WARN,"NFSU2","Winsock: socket(af=%u,type=%u,protocol=%u) fallo: %s",family,type,protocol,std::strerror(errno));
+        NFS_RUNTIME_LOG(ANDROID_LOG_WARN,"NFSU2","Winsock: socket(af=%u,type=%u,protocol=%u) failed: %s",family,type,protocol,std::strerror(errno));
         lastError=net::wsaError(errno);ret(net::invalidSocket,3);return;
     }
     uint32_t handle=net::newHandle(fd,false);
@@ -225,7 +225,7 @@ void socketBind(){
     // A raw ICMP socket ignores the port; on a ping socket it is the echo id and low ones need privileges.
     if(socket->icmp&&address.ss_family==AF_INET)reinterpret_cast<sockaddr_in*>(&address)->sin_port=0;
     int status=::bind(socket->fd,reinterpret_cast<sockaddr*>(&address),length);int error=errno;
-    NFS_RUNTIME_LOG(status?ANDROID_LOG_WARN:ANDROID_LOG_INFO,"NFSU2","Winsock: bind %08x %s%s%s",arg(0),net::describe(address).c_str(),status?" fallo: ":"",status?std::strerror(error):"");
+    NFS_RUNTIME_LOG(status?ANDROID_LOG_WARN:ANDROID_LOG_INFO,"NFSU2","Winsock: bind %08x %s%s%s",arg(0),net::describe(address).c_str(),status?" failed: ":"",status?std::strerror(error):"");
     errno=error;ret(status?net::failErrno():0,3);
 }
 void socketListen(){
@@ -281,8 +281,8 @@ void socketSendTo(){
     socket=net::find(arg(0));  // the call may have waited with the machine released
     if(socket){
         int error=errno;
-        if(net::hardError(sent))NFS_RUNTIME_LOG(ANDROID_LOG_WARN,"NFSU2","Winsock: sendto %08x -> %s fallo: %s",arg(0),addressLength?net::describe(address).c_str():"(conectado)",std::strerror(error));
-        else if(sent>=0&&addressLength){net::notePeer(*socket,"envia a",net::describe(address),sent);net::count(arg(0),*socket,net::describe(address),true,sent);}
+        if(net::hardError(sent))NFS_RUNTIME_LOG(ANDROID_LOG_WARN,"NFSU2","Winsock: sendto %08x -> %s failed: %s",arg(0),addressLength?net::describe(address).c_str():"(connected)",std::strerror(error));
+        else if(sent>=0&&addressLength){net::notePeer(*socket,"send to",net::describe(address),sent);net::count(arg(0),*socket,net::describe(address),true,sent);}
         errno=error;
     }
     ret(sent<0?net::failErrno():uint32_t(sent),6);
@@ -311,7 +311,7 @@ void socketRecvFrom(){
             peerLength=sizeof peer;return ::recvfrom(fd,message.data(),message.size(),int(flags&2),reinterpret_cast<sockaddr*>(&peer),&peerLength);});
         if(received<0){ret(net::failErrno(),6);return;}
         message.resize(size_t(received));
-        if(auto* current=net::find(arg(0))){net::notePeer(*current,"ping: respuesta de",net::describe(peer),received);net::count(arg(0),*current,net::describe(peer),false,received);}
+        if(auto* current=net::find(arg(0))){net::notePeer(*current,"ping: reply from",net::describe(peer),received);net::count(arg(0),*current,net::describe(peer),false,received);}
         auto packet=net::icmpPacket(*net::find(arg(0)),std::move(message),*reinterpret_cast<sockaddr_in*>(&peer));
         if(peerLength&&!net::storeAddress(address,lengthPointer,peer,std::min<socklen_t>(peerLength,16))){ret(net::fail(net::wsaEfault),6);return;}
         if(length)std::memcpy(data,packet.data(),std::min<size_t>(length,packet.size()));
@@ -321,10 +321,10 @@ void socketRecvFrom(){
     // MSG_TRUNC reports the full datagram size: Windows fails a short buffer with WSAEMSGSIZE.
     ssize_t received=net::blocking(*socket,POLLIN,socket->recvTimeout,[&](int fd){
         peerLength=sizeof peer;return ::recvfrom(fd,data,length,int(flags&3)|MSG_TRUNC,reinterpret_cast<sockaddr*>(&peer),&peerLength);});
-    if(net::hardError(received)){int error=errno;NFS_RUNTIME_LOG(ANDROID_LOG_WARN,"NFSU2","Winsock: recvfrom %08x fallo: %s",arg(0),std::strerror(error));errno=error;}
+    if(net::hardError(received)){int error=errno;NFS_RUNTIME_LOG(ANDROID_LOG_WARN,"NFSU2","Winsock: recvfrom %08x failed: %s",arg(0),std::strerror(error));errno=error;}
     if(received<0){ret(net::failErrno(),6);return;}
     socket=net::find(arg(0));
-    if(socket&&peerLength){net::notePeer(*socket,"recibe de",net::describe(peer),received);net::count(arg(0),*socket,net::describe(peer),false,received);}
+    if(socket&&peerLength){net::notePeer(*socket,"receive from",net::describe(peer),received);net::count(arg(0),*socket,net::describe(peer),false,received);}
     if(peerLength&&!net::storeAddress(address,lengthPointer,peer,std::min<socklen_t>(peerLength,16))){ret(net::fail(net::wsaEfault),6);return;}
     if(uint32_t(received)>length){ret(net::fail(net::wsaEmsgsize),6);return;}
     ret(uint32_t(received),6);
@@ -345,7 +345,7 @@ void socketIoctl(){
     switch(command){
     case 0x8004667eu:socket->guestNonBlocking=read32(value)!=0;ret(0,3);return;  // FIONBIO
     case 0x4004667fu:{int pending=0;if(::ioctl(socket->fd,FIONREAD,&pending)){ret(net::failErrno(),3);return;}write32(value,uint32_t(pending));ret(0,3);return;}  // FIONREAD
-    default:throw GuestStop("ioctlsocket comando pendiente: "+hex(command)+" desde "+hex(g_cur_func));
+    default:throw GuestStop("ioctlsocket command pending: "+hex(command)+" from "+hex(g_cur_func));
     }
 }
 void socketOption(){
@@ -371,11 +371,11 @@ void socketOption(){
             else option.l_onoff=integer()?0:1;
             result=::setsockopt(socket->fd,SOL_SOCKET,SO_LINGER,&option,sizeof option)?net::failErrno():0;break;
         }
-        default:throw GuestStop("setsockopt SOL_SOCKET opcion pendiente: "+hex(name)+" desde "+hex(g_cur_func));
+        default:throw GuestStop("setsockopt SOL_SOCKET option pending: "+hex(name)+" from "+hex(g_cur_func));
         }
     }else if(level==IPPROTO_TCP&&name==1)result=set(IPPROTO_TCP,TCP_NODELAY,integer());
     else if(level==IPPROTO_IP&&name==4)result=set(IPPROTO_IP,IP_TTL,integer());
-    else throw GuestStop("setsockopt nivel "+hex(level)+" opcion "+hex(name)+" pendiente desde "+hex(g_cur_func));
+    else throw GuestStop("setsockopt level "+hex(level)+" option "+hex(name)+" pending from "+hex(g_cur_func));
     ret(result,5);
 }
 // getsockopt for the options a Winsock program reads back.
@@ -394,10 +394,10 @@ void socketGetOption(){
         case 0x0020:status=::getsockopt(socket->fd,SOL_SOCKET,SO_BROADCAST,&option,&size);break;
         case 0x1005:option=int(socket->sendTimeout);break;
         case 0x1006:option=int(socket->recvTimeout);break;
-        default:throw GuestStop("getsockopt SOL_SOCKET opcion pendiente: "+hex(name)+" desde "+hex(g_cur_func));
+        default:throw GuestStop("getsockopt SOL_SOCKET option pending: "+hex(name)+" from "+hex(g_cur_func));
         }
     }else if(level==IPPROTO_TCP&&name==1)status=::getsockopt(socket->fd,IPPROTO_TCP,TCP_NODELAY,&option,&size);
-    else throw GuestStop("getsockopt nivel "+hex(level)+" opcion "+hex(name)+" pendiente desde "+hex(g_cur_func));
+    else throw GuestStop("getsockopt level "+hex(level)+" option "+hex(name)+" pending from "+hex(g_cur_func));
     if(status){ret(net::failErrno(),5);return;}
     write32(value,uint32_t(option));write32(lengthPointer,4);ret(0,5);
 }
@@ -470,7 +470,7 @@ void hostByName(){
         addrinfo* result=nullptr;
         int status=net::released([&]{return ::getaddrinfo(lookup.c_str(),nullptr,&hints,&result);});
         if(status){
-            NFS_RUNTIME_LOG(ANDROID_LOG_WARN,"NFSU2","Winsock: %s -> %s no resuelve (%s)",requested.c_str(),lookup.c_str(),gai_strerror(status));
+            NFS_RUNTIME_LOG(ANDROID_LOG_WARN,"NFSU2","Winsock: %s -> %s does not resolve (%s)",requested.c_str(),lookup.c_str(),gai_strerror(status));
             lastError=status==EAI_AGAIN?11002:status==EAI_NONAME?net::wsaHostNotFound:net::wsaNoData;ret(0,1);return;
         }
         for(auto* entry=result;entry&&addresses.size()<8;entry=entry->ai_next){
@@ -503,7 +503,7 @@ void hostName(){
 void wsaIoctl(){
     auto* socket=net::find(arg(0));if(!socket){ret(net::fail(net::wsaEnotsock),9);return;}
     uint32_t code=arg(1),output=arg(4),capacity=arg(5),returned=arg(6);
-    if(arg(7)||arg(8))throw GuestStop("WSAIoctl solapado pendiente desde "+hex(g_cur_func));
+    if(arg(7)||arg(8))throw GuestStop("Overlapped WSAIoctl pending from "+hex(g_cur_func));
     if(code==0xc8000014u){
         // SIO_ROUTING_INTERFACE_QUERY: the local address the host routes toward the given destination.
         sockaddr_storage target;socklen_t length=net::guestAddress(arg(2),arg(3),target);
@@ -524,7 +524,7 @@ void wsaIoctl(){
         NFS_RUNTIME_LOG(ANDROID_LOG_INFO,"NFSU2","Winsock: route toward %s uses local %s",to,text);
         ret(0,9);return;
     }
-    if(code!=0x4004747fu)throw GuestStop("WSAIoctl codigo pendiente: "+hex(code)+" desde "+hex(g_cur_func));
+    if(code!=0x4004747fu)throw GuestStop("WSAIoctl code pending: "+hex(code)+" from "+hex(g_cur_func));
     std::vector<std::array<uint8_t,76>> rows;ifaddrs* list=nullptr;
     if(getifaddrs(&list)==0){
         for(auto* entry=list;entry;entry=entry->ifa_next){
@@ -561,7 +561,7 @@ void netbios(){
         std::memset(ptr(buffer,length),0,length);std::memcpy(ptr(buffer,6),mac,6);
         uint16_t written=std::min<uint16_t>(length,60);std::memcpy(block+8,&written,2);break;
     }
-    default:throw GuestStop("Netbios comando pendiente: "+hex(command)+" desde "+hex(g_cur_func));
+    default:throw GuestStop("Netbios command pending: "+hex(command)+" from "+hex(g_cur_func));
     }
     block[1]=status;block[49]=status;ret(status,1);
 }

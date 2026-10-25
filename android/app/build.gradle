@@ -1,4 +1,15 @@
 plugins { id 'com.android.application' }
+def nfsAbi = project.findProperty('nfsAbi') ?: 'arm64-v8a'
+def prebuiltNativeDirectory = providers.gradleProperty('nfsNativeLibraries').map { rootProject.file(it) }.orNull
+if (prebuiltNativeDirectory != null) {
+    def libraries = ['libnfsu2_android.so', 'libnfsu2_diagnostics.so']
+    if (nfsAbi == 'arm64-v8a')
+        libraries += ['libfile_redirect_hook.so', 'libgsl_alloc_hook.so', 'libhook_impl.so', 'libmain_hook.so']
+    libraries.each { name ->
+        if (!new File(prebuiltNativeDirectory, "${nfsAbi}/${name}").isFile())
+            throw new GradleException("Missing prebuilt native library: ${nfsAbi}/${name}")
+    }
+}
 android {
     namespace 'com.nfsu2.androidevolved'
     compileSdk 35
@@ -10,10 +21,30 @@ android {
         versionCode 25
         versionName '0.14.10'
         // -PnfsAbi=armeabi-v7a builds the separate 32-bit APK.
-        ndk { abiFilters(project.findProperty('nfsAbi') ?: 'arm64-v8a') }
-        externalNativeBuild { cmake { arguments '-DANDROID_STL=c++_static' } }
+        ndk { abiFilters(nfsAbi) }
+        if (prebuiltNativeDirectory == null)
+            externalNativeBuild { cmake { arguments '-DANDROID_STL=c++_static' } }
     }
-    externalNativeBuild { cmake { path file('src/main/cpp/CMakeLists.txt'); version '3.30.5' } }
+    signingConfigs {
+        debug {
+            def fixedKeystore = System.getenv('NFSU2_DEBUG_KEYSTORE')
+            if (fixedKeystore) storeFile file(fixedKeystore)
+        }
+    }
+    // A debug signing identity does not make the release build debuggable.
+    buildTypes {
+        release { signingConfig signingConfigs.debug }
+    }
+    if (prebuiltNativeDirectory == null) {
+        externalNativeBuild { cmake { path file('src/main/cpp/CMakeLists.txt'); version '3.30.5' } }
+    } else {
+        sourceSets.main.jniLibs.srcDirs = [prebuiltNativeDirectory]
+    }
     // adrenotools opens its namespace hook libraries by path from nativeLibraryDir.
-    packaging { jniLibs { useLegacyPackaging true } }
+    packaging {
+        jniLibs {
+            useLegacyPackaging true
+            if (prebuiltNativeDirectory != null) keepDebugSymbols += ['**/*.so']
+        }
+    }
 }

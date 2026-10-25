@@ -210,6 +210,15 @@ The `android/` directory contains the complete Gradle project for the Android AP
    - Copy your PC game files (`Need for Speed Underground 2`) to the device's internal storage inside a folder named `/sdcard/nfsu2/`.
    - Open **NFSU2 Android Evolved**, grant file access, choose your preferred language, resolution, and FPS cap, and launch the game!
 
+The launcher and touch-control settings are in English; the game language remains
+selectable independently. The **Android release APK (debug-signed)** GitHub Actions
+workflow builds an ARM64 release APK with a fixed debug signing key and uploads it
+as a workflow artifact. No game files are needed for CI: it rebuilds the launcher
+around the checksum-pinned upstream native runtime. A fixed private debug
+keystore is stored in the encrypted `ANDROID_DEBUG_KEYSTORE_BASE64` Actions secret.
+Game files are still supplied on the device after installation. See
+[CI build details](docs/ANDROID_PORT.md#github-actions-release-apk).
+
 See additional documentation:
 - [Android Port Status & Build Notes](docs/ANDROID_PORT.md)
 - [DXVK Native Android Port](ports/dxvk_android/README.md)

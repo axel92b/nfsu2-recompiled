@@ -1,0 +1,98 @@
+name: Android release APK (debug-signed)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - feat/english-launcher-android-release
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Set up Android SDK and NDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          cmdline-tools-version: '12266719'
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;28.2.13676358'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@4c125117fe7c5aed11272ec4213f602f012f89f2 # v5
+
+      - name: Prepare checksum-pinned native runtime
+        run: python scripts/prepare_android_runtime.py build/android-runtime
+
+      - name: Check runtime packaging and English messages
+        run: python -m unittest discover -s tests/android_launcher -p 'test_*.py' -v
+
+      - name: Restore fixed private debug key
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          : "${DEBUG_KEYSTORE_BASE64:?Set the ANDROID_DEBUG_KEYSTORE_BASE64 repository Actions secret}"
+          umask 077
+          printf '%s' "$DEBUG_KEYSTORE_BASE64" | tr -d '\r\n' | base64 --decode > "$RUNNER_TEMP/nfsu2-debug.keystore"
+          if [[ ! -s "$RUNNER_TEMP/nfsu2-debug.keystore" ]]; then
+            echo "::error::The signing secret decoded to an empty keystore"
+            exit 1
+          fi
+          echo "NFSU2_DEBUG_KEYSTORE=$RUNNER_TEMP/nfsu2-debug.keystore" >> "$GITHUB_ENV"
+
+      - name: Build ARM64 release APK
+        working-directory: android
+        run: bash gradlew --no-daemon --max-workers=2 -PnfsNativeLibraries=../build/android-runtime assembleRelease
+
+      - name: Verify release mode and signing identity
+        run: |
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          verification="$("$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$apk")"
+          printf '%s\n' "$verification"
+          expected="$(keytool -exportcert -keystore "$NFSU2_DEBUG_KEYSTORE" \
+            -storepass android -alias androiddebugkey | sha256sum | cut -d ' ' -f 1)"
+          actual="$(printf '%s\n' "$verification" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::The APK was not signed with the fixed debug key"
+            exit 1
+          fi
+          if [[ "$(apkanalyzer manifest debuggable "$apk")" != false ]]; then
+            echo "::error::The release APK must not be debuggable"
+            exit 1
+          fi
+          python scripts/prepare_android_runtime.py build/android-runtime --verify-apk "$apk"
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: nfsu2-release-arm64-v8a
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+      - name: Remove temporary debug key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/nfsu2-debug.keystore"

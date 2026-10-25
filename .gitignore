@@ -3,6 +3,8 @@
 src/recomp/gen/
 # Build output
 build/
+# Python runtime preparation/test bytecode
+__pycache__/
 # Run logs and crash dumps (contain guest memory/addresses)
 logs/*
 !logs/.gitkeep
