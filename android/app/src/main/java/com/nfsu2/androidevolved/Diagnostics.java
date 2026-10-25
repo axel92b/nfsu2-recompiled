@@ -1,6 +1,7 @@
 package com.nfsu2.androidevolved;
 
 import android.app.ActivityManager;
+import android.app.Application;
 import android.app.ApplicationExitInfo;
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -63,6 +64,7 @@ final class Diagnostics {
     static String summary(Context context) {
         GpuDrivers.Driver driver = GpuDrivers.selected(context);
         return "NFSU2 Android Evolved " + ReleaseUpdates.installed(context)
+                + "\nCapture process: " + Application.getProcessName() + " (PID " + Process.myPid() + ")"
                 + "\nAPK ABI: " + (Process.is64Bit() ? "arm64-v8a" : "armeabi-v7a")
                 + "\nPhone: " + Build.MANUFACTURER + " " + Build.MODEL
                 + "\nAndroid: " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")"
@@ -77,7 +79,8 @@ final class Diagnostics {
         if (old != null) for (File file : old)
             if (file.isFile() && file.lastModified() < System.currentTimeMillis() - TimeUnit.DAYS.toMillis(7)) file.delete();
         String date = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(new Date());
-        File report = new File(directory, "NFSU2-diagnostico-" + date + ".zip");
+        String source = Application.getProcessName().endsWith(":game") ? "-game" : "";
+        File report = new File(directory, "NFSU2-diagnostico-" + date + source + ".zip");
         try (ZipOutputStream zip = new ZipOutputStream(new FileOutputStream(report))) {
             StringBuilder info = new StringBuilder(summary(context));
             info.append("Date: ").append(new Date()).append("\nABI: ").append(Arrays.toString(Build.SUPPORTED_ABIS))

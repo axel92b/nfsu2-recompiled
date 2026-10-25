@@ -27,7 +27,7 @@ final class RacingControlsView extends View {
     /** Touches outside every control drive the game's mouse: x/y as fractions of the view, phase 0 down, 1 move, 2 up. */
     interface Pointer { void touch(float x, float y, int phase); }
     // Special controls that do not map to a DirectInput scan code.
-    private static final int MODE = -1, TEXT = -2, STICK = -3, EDIT = -5;
+    private static final int MODE = -1, TEXT = -2, STICK = -3, EDIT = -5, REPORT = -6;
     private static final int ROUND = 0, PEDAL = 1, WHEEL = 2;
     private final Keys keys;
     private Pointer pointer;
@@ -36,6 +36,7 @@ final class RacingControlsView extends View {
     private final Runnable textInput;
     private final Runnable configureTilt;
     private final Runnable configureFrameLimit;
+    private final Runnable saveDiagnosticReport;
     private String style;
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -66,10 +67,12 @@ final class RacingControlsView extends View {
             area = new RectF(x, y, x+w, y+h); original=new RectF(area); this.shape=shape; this.icon=icon; this.scan=scan; this.color=color;
         }
     }
-    RacingControlsView(Context context, Keys keys, Runnable textInput, Runnable configureTilt, Runnable configureFrameLimit) {
+    RacingControlsView(Context context, Keys keys, Runnable textInput, Runnable configureTilt, Runnable configureFrameLimit,
+                       Runnable saveDiagnosticReport) {
         super(context); this.keys=keys; this.textInput=textInput;
         layouts=context.getSharedPreferences("touch_layouts_v1",Context.MODE_PRIVATE);
         style=layouts.getString("style","classic");this.configureTilt=configureTilt;this.configureFrameLimit=configureFrameLimit;
+        this.saveDiagnosticReport=saveDiagnosticReport;
         setContentDescription("Game controls");
         setHapticFeedbackEnabled(true);
         line.setStyle(Paint.Style.STROKE);line.setStrokeCap(Paint.Cap.ROUND);line.setStrokeJoin(Paint.Join.ROUND);
@@ -117,6 +120,7 @@ final class RacingControlsView extends View {
         float w=getWidth()/scale, h=getHeight()/scale, bottom=h-20;
         add(w-62,16,46,"settings",EDIT);
         add(w-118,16,46,racing?"menu":"wheel",MODE);
+        add(w-174,16,46,"LOG",REPORT);
         if(racing) {
             add(16,16,46,"pause",1);
             // Free-roam actions of the PC keyboard defaults (Options > Controls).
@@ -442,6 +446,11 @@ final class RacingControlsView extends View {
             return true;
         }
         if(action==MotionEvent.ACTION_CANCEL) { releaseAll(); return true; }
+        // Start capture before guest input cleanup, which may itself be stalled.
+        if(action==MotionEvent.ACTION_DOWN||action==MotionEvent.ACTION_POINTER_DOWN) {
+            Control pressed=hit(e.getX(index),e.getY(index));
+            if(pressed!=null&&pressed.scan==REPORT)saveDiagnosticReport.run();
+        }
         // A new gesture means no finger is down: anything still held lost its
         // ACTION_UP (edge gestures, palm rejection, overlays) and would stay
         // pressed forever, e.g. the left arrow steering by itself.

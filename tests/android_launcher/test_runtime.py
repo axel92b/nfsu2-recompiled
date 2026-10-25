@@ -161,6 +161,55 @@ class ActivityLifecycleTest(unittest.TestCase):
         self.assertIn("android.os.Process.killProcess(process.pid);", launch)
 
 
+class LiveDiagnosticsTest(unittest.TestCase):
+    def setUp(self):
+        java = ROOT / "android" / "app" / "src" / "main" / "java" / "com" / "nfsu2" / "androidevolved"
+        self.activity = (java / "GameActivity.java").read_text(encoding="utf-8")
+        self.controls = (java / "RacingControlsView.java").read_text(encoding="utf-8")
+        self.diagnostics = (java / "Diagnostics.java").read_text(encoding="utf-8")
+
+    def test_log_control_uses_a_host_callback_and_preserves_layout_editing(self):
+        self.assertIn('add(w-174,16,46,"LOG",REPORT);', self.controls)
+        self.assertIn("REPORT = -6", self.controls)
+        self.assertIn("this::saveDiagnosticReport", self.activity)
+        touch = self.controls.split("@Override public boolean onTouchEvent(", 1)[1]
+        self.assertIn("pressed.scan==REPORT", touch)
+        self.assertLess(touch.index("saveDiagnosticReport.run();"), touch.index("if(action==MotionEvent.ACTION_DOWN)releaseAll();"))
+        editor = self.controls.split("private boolean editTouch(", 1)[1].split("private void showOptions()", 1)[0]
+        self.assertNotIn("saveDiagnosticReport.run();", editor)
+
+    def test_capture_is_asynchronous_and_does_not_leave_the_game(self):
+        capture = self.activity.split("private void saveDiagnosticReport() {", 1)[1].split("\n    }", 1)[0]
+        self.assertIn("new Thread(", capture)
+        self.assertIn("Diagnostics.createReport(this)", capture)
+        self.assertIn("Diagnostics.saveToDownloads(this,report)", capture)
+        self.assertNotIn("startActivity", capture)
+        self.assertNotIn("killProcess", capture)
+        self.assertNotIn("finish()", capture)
+        self.assertNotIn("Diagnostics.issueUri", capture)
+
+    def test_native_lifecycle_callbacks_are_forwarded_without_process_killing(self):
+        for method, call in (
+            ("onConfigurationChanged", "super.onConfigurationChanged(config);"),
+            ("surfaceCreated", "super.surfaceCreated(holder);"),
+            ("surfaceChanged", "super.surfaceChanged(holder,format,width,height);"),
+            ("surfaceDestroyed", "super.surfaceDestroyed(holder);"),
+            ("onDestroy", "super.onDestroy();"),
+        ):
+            with self.subTest(method=method):
+                body = self.activity.split(f"void {method}(", 1)[1].split("\n    }", 1)[0]
+                self.assertIn(call, body)
+        self.assertNotIn("android.os.Process.killProcess", self.activity)
+        self.assertIn("firstTouchAfterResume=true;", self.activity)
+        self.assertIn("first touch key scan=0x", self.activity)
+
+    def test_report_identifies_the_live_game_process(self):
+        self.assertIn("Capture process: ", self.diagnostics)
+        self.assertIn("Application.getProcessName()", self.diagnostics)
+        self.assertIn("Process.myPid()", self.diagnostics)
+        self.assertIn('endsWith(":game") ? "-game" : ""', self.diagnostics)
+
+
 class SigningWorkflowTest(unittest.TestCase):
     def test_private_key_is_restored_from_an_encrypted_secret(self):
         workflow = (ROOT / ".github" / "workflows" / "android-release.yml").read_text(encoding="utf-8")

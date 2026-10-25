@@ -148,6 +148,27 @@ its documented locally generated C/pcrecomp/DXVK prerequisites.
 
 Launcher/runtime checks: `python -m unittest discover -s tests\android_launcher -p "test_*.py" -v`.
 
+## Capturing a live game freeze
+
+Use the **LOG** button in the top-right on-screen control row, next to the
+existing controls. It works in game/menu mode; if the layout editor is open,
+use **SAVE** or **CANCEL** to leave it first. LOG can be moved/resized in the
+editor like the other controls.
+When reproducing a freeze, leave the game in the foreground for about 20 seconds,
+then tap **LOG** without returning to the launcher or force-stopping the app.
+
+Capture runs on a background thread in the still-running `:game` process.
+Wait for **Diagnostic report saved**, then find
+`NFSU2-diagnostico-<date>-<time>-game.zip` in **Downloads > NFSU2** and share that
+ZIP. It includes logcat, capture process/PID, options and available exit records;
+game files and saves are not included, and nothing is uploaded automatically.
+Activity/surface lifecycle events, native status and the first touch key after
+each resume are logged to help distinguish recreation, input and rendering
+failures.
+
+Only close the game after the report is saved. A launcher report captured after
+a force-stop may lack the failed session's logs on some devices.
+
 ## Reference review
 
 - https://github.com/codepdbh/NFS-CARBON-360-ANDROID-RECOMP

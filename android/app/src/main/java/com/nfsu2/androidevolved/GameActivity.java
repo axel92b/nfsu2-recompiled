@@ -5,6 +5,7 @@ import android.os.Build;
 import android.os.Environment;
 import android.provider.Settings;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.net.Uri;
 import android.Manifest;
 import android.content.pm.PackageManager;
@@ -12,6 +13,7 @@ import android.widget.Toast;
 import android.widget.TextView;
 import android.os.Bundle;
 import android.view.Gravity;
+import android.view.SurfaceHolder;
 import android.view.ViewGroup;
 import android.widget.PopupWindow;
 import android.graphics.Color;
@@ -23,12 +25,15 @@ import android.text.InputFilter;
 import android.text.InputType;
 import android.view.inputmethod.EditorInfo;
 import android.util.DisplayMetrics;
+import android.util.Log;
+import java.io.File;
 
 /** Storage permission gateway for the fixed Internal storage/nfsu2 directory. */
 public final class GameActivity extends NativeActivity {
     static { System.loadLibrary("nfsu2_android"); }
     private boolean requested;
     private boolean foreground;
+    private boolean firstTouchAfterResume, savingDiagnosticReport;
     private TextView status;
     private PopupWindow statusWindow;
     private PopupWindow controlsWindow;
@@ -61,7 +66,13 @@ public final class GameActivity extends NativeActivity {
         boolean held=touchKeys[scan]||(scan==0xcb&&tiltLeft)||(scan==0xcd&&tiltRight);
         if(sentKeys[scan]!=held) {sentKeys[scan]=held;nativeKey(scan,held);}
     }
-    private void setTouchKey(int scan,boolean down) {touchKeys[scan]=down;sendCombinedKey(scan);}
+    private void setTouchKey(int scan,boolean down) {
+        if(down&&firstTouchAfterResume) {
+            firstTouchAfterResume=false;
+            logLifecycle("first touch key scan=0x"+Integer.toHexString(scan));
+        }
+        touchKeys[scan]=down;sendCombinedKey(scan);
+    }
     private void setTiltKeys(boolean left,boolean right) {tiltLeft=left;tiltRight=right;sendCombinedKey(0xcb);sendCombinedKey(0xcd);}
     private void updateTiltSensor() {
         if(tiltSensors==null)return;tiltSensors.unregisterListener(tiltListener);setTiltKeys(false,false);
@@ -193,7 +204,42 @@ public final class GameActivity extends NativeActivity {
         name.requestFocus();
         dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
     }
+    private void logLifecycle(String event) {
+        Log.i("NFSU2", "GameActivity " + event + " pid=" + android.os.Process.myPid()
+                + " instance=" + Integer.toHexString(System.identityHashCode(this))
+                + " changing=0x" + Integer.toHexString(getChangingConfigurations())
+                + " finishing=" + isFinishing());
+    }
+    private void saveDiagnosticReport() {
+        if (savingDiagnosticReport) {
+            Toast.makeText(this, "A diagnostic report is already being saved", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        savingDiagnosticReport=true;
+        logLifecycle("diagnostic report requested");
+        new Thread(() -> {
+            try {
+                File report=Diagnostics.createReport(this);
+                String location=Diagnostics.saveToDownloads(this,report);
+                Log.i("NFSU2","In-game diagnostic report saved: "+location);
+                showDiagnosticResult("Diagnostic report saved", "Saved to:\n"+location
+                        + "\n\nShare this ZIP. You can close the game after this message.");
+            } catch (Exception error) {
+                Log.e("NFSU2","Could not save in-game diagnostic report",error);
+                showDiagnosticResult("Could not save report",error.toString());
+            }
+        }, "NFSU2DiagnosticReport").start();
+        Toast.makeText(this, "Saving in-game diagnostic report…", Toast.LENGTH_SHORT).show();
+    }
+    private void showDiagnosticResult(String title,String message) {
+        runOnUiThread(() -> {
+            savingDiagnosticReport=false;
+            if(isFinishing()||isDestroyed())return;
+            new AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("OK",null).show();
+        });
+    }
     @Override protected void onCreate(Bundle saved) {
+        logLifecycle("onCreate saved="+(saved!=null));
         super.onCreate(saved);
         inputManager=(android.hardware.input.InputManager)getSystemService(INPUT_SERVICE);
         tiltSensors=(android.hardware.SensorManager)getSystemService(SENSOR_SERVICE);
@@ -238,7 +284,8 @@ public final class GameActivity extends NativeActivity {
         statusWindow = new PopupWindow(status, ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT, false);
         statusWindow.setTouchable(false);
-        touchControls = new RacingControlsView(this, this::setTouchKey, this::showTextInput,this::showTiltOptions,this::showFrameLimitOptions);
+        touchControls = new RacingControlsView(this, this::setTouchKey, this::showTextInput,
+                this::showTiltOptions,this::showFrameLimitOptions,this::saveDiagnosticReport);
         touchControls.setPointer(GameActivity::nativePointer);
         controlsWindow = new PopupWindow(touchControls, ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT, false);
@@ -246,6 +293,7 @@ public final class GameActivity extends NativeActivity {
     }
     public void setStatus(String message) {
         String translated = NativeMessages.toEnglish(message);
+        Log.i("NFSU2","Native status pid="+android.os.Process.myPid()+": "+translated);
         runOnUiThread(() -> {
             if (statusHideTask != null) status.removeCallbacks(statusHideTask);
             if (translated.contains("Running game CRT entry")) {
@@ -261,6 +309,7 @@ public final class GameActivity extends NativeActivity {
         });
     }
     @Override public void onWindowFocusChanged(boolean focused) {
+        logLifecycle("window focus="+focused);
         super.onWindowFocusChanged(focused);
         if(!focused) {
             if(touchControls!=null)touchControls.releaseAll();
@@ -295,6 +344,7 @@ public final class GameActivity extends NativeActivity {
         if (hold) lanBroadcasts.acquire(); else lanBroadcasts.release();
     }
     @Override protected void onPause() {
+        logLifecycle("onPause");
         foreground=false;
         holdLanBroadcasts(false);
         updateTiltSensor();
@@ -305,8 +355,10 @@ public final class GameActivity extends NativeActivity {
         super.onPause();
     }
     @Override protected void onResume() {
+        logLifecycle("onResume");
         super.onResume();
         foreground=true;
+        firstTouchAfterResume=true;
         holdLanBroadcasts(true);
         updateTiltSensor();
         if(inputManager!=null){inputManager.registerInputDeviceListener(gamepadListener,null);updateGamepads();}
@@ -330,5 +382,30 @@ public final class GameActivity extends NativeActivity {
         super.onRequestPermissionsResult(code, permissions, results);
         // NativeActivity may stay resumed when a runtime permission dialog closes.
         if (code == 1 && results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) recreate();
+    }
+    @Override public void onConfigurationChanged(Configuration config) {
+        logLifecycle("configuration size="+config.screenWidthDp+"x"+config.screenHeightDp
+                +" smallest="+config.smallestScreenWidthDp+" layout=0x"+Integer.toHexString(config.screenLayout)
+                +" density="+config.densityDpi+" uiMode=0x"+Integer.toHexString(config.uiMode));
+        super.onConfigurationChanged(config);
+    }
+    @Override public void surfaceCreated(SurfaceHolder holder) {
+        logLifecycle("surfaceCreated begin");
+        super.surfaceCreated(holder);
+        logLifecycle("surfaceCreated end");
+    }
+    @Override public void surfaceChanged(SurfaceHolder holder,int format,int width,int height) {
+        logLifecycle("surfaceChanged begin size="+width+"x"+height+" format="+format);
+        super.surfaceChanged(holder,format,width,height);
+        logLifecycle("surfaceChanged end");
+    }
+    @Override public void surfaceDestroyed(SurfaceHolder holder) {
+        logLifecycle("surfaceDestroyed begin");
+        super.surfaceDestroyed(holder);
+        logLifecycle("surfaceDestroyed end");
+    }
+    @Override protected void onDestroy() {
+        logLifecycle("onDestroy");
+        super.onDestroy();
     }
 }
