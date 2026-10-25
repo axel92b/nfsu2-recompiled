@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest import mock
+import xml.etree.ElementTree as ET
 import zipfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -135,6 +136,26 @@ class NativeMessagesTest(unittest.TestCase):
                 check=True,
             )
             subprocess.run([java, "-cp", directory, "com.nfsu2.androidevolved.NativeMessagesCheck"], check=True)
+
+
+class ActivityLifecycleTest(unittest.TestCase):
+    def test_game_activity_handles_size_changes_without_recreation(self):
+        namespace = "http://schemas.android.com/apk/res/android"
+        manifest = ET.parse(ROOT / "android" / "app" / "src" / "main" / "AndroidManifest.xml")
+        activity = manifest.find("application/activity[@android:name='.GameActivity']", {"android": namespace})
+        self.assertIsNotNone(activity)
+        changes = set(activity.get(f"{{{namespace}}}configChanges", "").split("|"))
+        self.assertTrue({"orientation", "screenSize", "smallestScreenSize", "screenLayout", "keyboardHidden"} <= changes)
+        self.assertEqual(activity.get(f"{{{namespace}}}process"), ":game")
+
+    def test_real_destruction_keeps_native_process_cleanup(self):
+        source = (ROOT / "android" / "app" / "src" / "main" / "java" / "com" / "nfsu2" / "androidevolved" / "GameActivity.java").read_text(encoding="utf-8")
+        signature = "@Override protected void onDestroy() {"
+        self.assertIn(signature, source)
+        body = source.split(signature, 1)[1].split("\n    }", 1)[0]
+        self.assertIn("super.onDestroy();", body)
+        self.assertIn("android.os.Process.killProcess(android.os.Process.myPid());", body)
+        self.assertLess(body.index("super.onDestroy();"), body.index("android.os.Process.killProcess"))
 
 
 class SigningWorkflowTest(unittest.TestCase):
