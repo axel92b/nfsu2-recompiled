@@ -407,5 +407,7 @@ public final class GameActivity extends NativeActivity {
     @Override protected void onDestroy() {
         logLifecycle("onDestroy");
         super.onDestroy();
+        // Each launch uses a fresh guest machine in the dedicated :game process.
+        android.os.Process.killProcess(android.os.Process.myPid());
     }
 }

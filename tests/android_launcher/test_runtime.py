@@ -148,10 +148,15 @@ class ActivityLifecycleTest(unittest.TestCase):
         self.assertTrue({"orientation", "screenSize", "smallestScreenSize", "screenLayout", "keyboardHidden"} <= changes)
         self.assertEqual(activity.get(f"{{{namespace}}}process"), ":game")
 
-    def test_activity_destruction_does_not_kill_the_game_process(self):
+    def test_activity_destruction_kills_the_game_process_after_native_cleanup(self):
         source = (ROOT / "android" / "app" / "src" / "main" / "java" / "com" / "nfsu2" / "androidevolved" / "GameActivity.java").read_text(encoding="utf-8")
         self.assertIn("extends NativeActivity", source)
-        self.assertNotIn("android.os.Process.killProcess", source)
+        destroy = source.split("void onDestroy() {", 1)[1].split("\n    }", 1)[0]
+        kill = "android.os.Process.killProcess(android.os.Process.myPid());"
+        self.assertIn("super.onDestroy();", destroy)
+        self.assertIn(kill, destroy)
+        self.assertLess(destroy.index("super.onDestroy();"), destroy.index(kill))
+        self.assertEqual(source.count("android.os.Process.killProcess"), 1)
 
     def test_explicit_launch_still_starts_a_fresh_game_process(self):
         source = (ROOT / "android" / "app" / "src" / "main" / "java" / "com" / "nfsu2" / "androidevolved" / "LauncherActivity.java").read_text(encoding="utf-8")
@@ -188,7 +193,7 @@ class LiveDiagnosticsTest(unittest.TestCase):
         self.assertNotIn("finish()", capture)
         self.assertNotIn("Diagnostics.issueUri", capture)
 
-    def test_native_lifecycle_callbacks_are_forwarded_without_process_killing(self):
+    def test_native_lifecycle_callbacks_are_forwarded(self):
         for method, call in (
             ("onConfigurationChanged", "super.onConfigurationChanged(config);"),
             ("surfaceCreated", "super.surfaceCreated(holder);"),
@@ -199,7 +204,8 @@ class LiveDiagnosticsTest(unittest.TestCase):
             with self.subTest(method=method):
                 body = self.activity.split(f"void {method}(", 1)[1].split("\n    }", 1)[0]
                 self.assertIn(call, body)
-        self.assertNotIn("android.os.Process.killProcess", self.activity)
+                if method != "onDestroy":
+                    self.assertNotIn("killProcess", body)
         self.assertIn("firstTouchAfterResume=true;", self.activity)
         self.assertIn("first touch key scan=0x", self.activity)
 
