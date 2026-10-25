@@ -148,14 +148,17 @@ class ActivityLifecycleTest(unittest.TestCase):
         self.assertTrue({"orientation", "screenSize", "smallestScreenSize", "screenLayout", "keyboardHidden"} <= changes)
         self.assertEqual(activity.get(f"{{{namespace}}}process"), ":game")
 
-    def test_real_destruction_keeps_native_process_cleanup(self):
+    def test_activity_destruction_does_not_kill_the_game_process(self):
         source = (ROOT / "android" / "app" / "src" / "main" / "java" / "com" / "nfsu2" / "androidevolved" / "GameActivity.java").read_text(encoding="utf-8")
-        signature = "@Override protected void onDestroy() {"
-        self.assertIn(signature, source)
-        body = source.split(signature, 1)[1].split("\n    }", 1)[0]
-        self.assertIn("super.onDestroy();", body)
-        self.assertIn("android.os.Process.killProcess(android.os.Process.myPid());", body)
-        self.assertLess(body.index("super.onDestroy();"), body.index("android.os.Process.killProcess"))
+        self.assertIn("extends NativeActivity", source)
+        self.assertNotIn("android.os.Process.killProcess", source)
+
+    def test_explicit_launch_still_starts_a_fresh_game_process(self):
+        source = (ROOT / "android" / "app" / "src" / "main" / "java" / "com" / "nfsu2" / "androidevolved" / "LauncherActivity.java").read_text(encoding="utf-8")
+        launch = source.split("private void launch() {", 1)[1].split("// ---- Storage", 1)[0]
+        self.assertIn("process.uid == android.os.Process.myUid()", launch)
+        self.assertIn('process.processName.equals(getPackageName() + ":game")', launch)
+        self.assertIn("android.os.Process.killProcess(process.pid);", launch)
 
 
 class SigningWorkflowTest(unittest.TestCase):
